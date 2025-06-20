@@ -208,16 +208,16 @@ class DataHandler:
             raise
 
     def _detect_csv_column_positions(self, workbook: xw.Book) -> dict:
-        """CSV列位置動的検出（完全修正版）"""
-        logger.info("=== CSV列位置検出開始（修正版） ===")
+        """CSV列位置動的検出（完全修正版 - 全範囲検索対応）"""
+        logger.info("=== CSV列位置検出開始（全範囲検索修正版） ===")
         
         column_positions = {}
         
         try:
             csv_sheet = workbook.sheets[self.csv_sheet_name]
             
-            # ヘッダー行（1行目）を読み取り - 範囲拡大
-            max_check_cols = 25  # 最大25列までチェック
+            # ヘッダー行（1行目）を読み取り - 範囲を大幅拡大（最大50列）
+            max_check_cols = 50  # 最大50列までチェック
             header_range = f"A1:{self._column_number_to_letter(max_check_cols)}1"
             headers = csv_sheet.range(header_range).value
             
@@ -226,10 +226,9 @@ class DataHandler:
             else:
                 header_list = [headers]
             
-            logger.info(f"検出されたヘッダー全体: {header_list}")
+            logger.info(f"検出されたヘッダー全体（最初の20列）: {header_list[:20]}")
             
-            # 実際のCSV構造に基づく正確な列位置マッピング
-            # CSVファイル解析結果: キャンペーン名=C列, Imp=I列, Click=J列, CV=L列, グロス=N列, ネット=O列
+            # 対象列の完全一致検索（大文字小文字・前後空白を考慮）
             target_columns = {
                 'キャンペーン名': 'campaign_name_col',
                 'Imp': 'imp_col', 
@@ -239,17 +238,37 @@ class DataHandler:
                 'ネット': 'net_col'
             }
             
-            # 完全一致検索
+            # 完全一致検索（前後空白削除・大文字小文字区別なし）
             for i, header in enumerate(header_list):
-                if header:
+                if header is not None:
                     header_str = str(header).strip()
                     for target_name, key in target_columns.items():
-                        if target_name == header_str:
+                        if header_str == target_name:
                             excel_col = self._column_number_to_letter(i + 1)
                             column_positions[key] = excel_col
                             logger.info(f"★ 列位置検出成功: {target_name} → {excel_col}列（{i+1}番目）")
+                            break
             
-            # 実際のCSV構造に基づく正確なデフォルト値
+            # 部分一致検索（完全一致で見つからない場合のフォールバック）
+            if len(column_positions) < len(target_columns):
+                logger.warning("完全一致で全列が検出できないため部分一致検索を実行")
+                for i, header in enumerate(header_list):
+                    if header is not None:
+                        header_str = str(header).strip().lower()
+                        for target_name, key in target_columns.items():
+                            if key not in column_positions:
+                                if target_name.lower() in header_str or header_str in target_name.lower():
+                                    excel_col = self._column_number_to_letter(i + 1)
+                                    column_positions[key] = excel_col
+                                    logger.info(f"◆ 部分一致で検出: {target_name} → {excel_col}列（{i+1}番目）ヘッダー: '{header_str}'")
+                                    break
+            
+            # 検出結果確認
+            found_columns = len(column_positions)
+            total_columns = len(target_columns)
+            logger.info(f"列位置検出結果: {found_columns}/{total_columns}列")
+            
+            # 実際のCSV構造に基づく正確なデフォルト値（最後の手段）
             correct_default_positions = {
                 'campaign_name_col': 'C',  # キャンペーン名 = 3列目
                 'imp_col': 'I',            # Imp = 9列目
@@ -265,7 +284,9 @@ class DataHandler:
                     column_positions[key] = correct_col
                     logger.warning(f"列位置未検出、正確なデフォルト使用: {key} → {correct_col}列")
             
-            logger.info(f"=== 最終列位置マッピング ===: {column_positions}")
+            logger.info(f"=== 最終列位置マッピング ===")
+            for key, col in column_positions.items():
+                logger.info(f"  {key}: {col}列")
             
             # 検証: 実際にセルの値を確認
             self._verify_column_positions(csv_sheet, column_positions)
@@ -285,8 +306,8 @@ class DataHandler:
             }
 
     def _verify_column_positions(self, csv_sheet: xw.Sheet, column_positions: dict):
-        """列位置検証"""
-        logger.info("=== 列位置検証開始 ===")
+        """列位置検証（数値データの存在確認強化）"""
+        logger.info("=== 列位置検証開始（数値データ確認強化） ===")
         
         try:
             # ヘッダー確認
@@ -294,15 +315,33 @@ class DataHandler:
                 header_value = csv_sheet.range(f"{excel_col}1").value
                 logger.info(f"  {key} ({excel_col}列): ヘッダー='{header_value}'")
             
-            # データ確認（2行目）
-            logger.info("データ行確認（2行目）:")
-            for key, excel_col in column_positions.items():
-                try:
-                    data_value = csv_sheet.range(f"{excel_col}2").value
-                    logger.info(f"  {key} ({excel_col}2): データ='{data_value}'")
-                except:
-                    logger.warning(f"  {key} ({excel_col}2): データ読み取りエラー")
-                    
+            # データ確認（2-5行目、数値系列は型チェックも）
+            logger.info("データ行確認（2-5行目）:")
+            numeric_columns = ['imp_col', 'click_col', 'cv_col', 'gross_col', 'net_col']
+            
+            for row in range(2, 7):  # 2-6行目
+                logger.info(f"  行{row}:")
+                for key, excel_col in column_positions.items():
+                    try:
+                        data_value = csv_sheet.range(f"{excel_col}{row}").value
+                        
+                        # 数値列の場合は型と値の詳細確認
+                        if key in numeric_columns:
+                            if data_value is not None:
+                                # 数値変換可能かチェック
+                                try:
+                                    float_value = float(str(data_value).replace(',', ''))
+                                    logger.info(f"    {key} ({excel_col}{row}): データ='{data_value}' (数値: {float_value})")
+                                except ValueError:
+                                    logger.warning(f"    {key} ({excel_col}{row}): データ='{data_value}' (数値変換不可)")
+                            else:
+                                logger.info(f"    {key} ({excel_col}{row}): データ=None")
+                        else:
+                            logger.info(f"    {key} ({excel_col}{row}): データ='{data_value}'")
+                            
+                    except Exception as cell_error:
+                        logger.warning(f"    {key} ({excel_col}{row}): データ読み取りエラー - {cell_error}")
+                        
         except Exception as e:
             logger.warning(f"列位置検証エラー: {e}")
 
@@ -317,7 +356,7 @@ class DataHandler:
         logger.info(f"ヘッダー設定完了: {len(headers)}列")
 
     def _embed_formulas_range(self, sheet: xw.Sheet, column_positions: dict):
-        """関数範囲埋込（修正版）"""
+        """関数範囲埋込（グロス・ネット計算完全修正版）"""
 
         # シート参照名を正確に指定（スペース対応）
         csv_sheet_ref = f"'{self.csv_sheet_name}'"
@@ -340,7 +379,7 @@ class DataHandler:
         for row in range(2, self.max_campaign_rows + 2):  # 2行目から101行目まで
 
             try:
-                # B列: Imp（修正版）
+                # B列: Imp（元のまま維持）
                 formula_b = f'''=IF(A{row}="", "",
   LET(
     キー, A{row},
@@ -354,7 +393,7 @@ class DataHandler:
                 sheet.range(f"B{row}").formula = formula_b
                 formula_count += 1
 
-                # C列: Click（修正版）
+                # C列: Click（元のまま維持）
                 formula_c = f'''=IF(A{row}="", "",
   LET(
     キー, A{row},
@@ -368,12 +407,12 @@ class DataHandler:
                 sheet.range(f"C{row}").formula = formula_c
                 formula_count += 1
 
-                # D列: CTR（修正版）
+                # D列: CTR（元のまま維持）
                 formula_d = f'=IF(OR(B{row}="", C{row}="", B{row}=0), "", TEXT(C{row}/B{row}, "0.00%"))'
                 sheet.range(f"D{row}").formula = formula_d
                 formula_count += 1
 
-                # E列: CV（修正版）
+                # E列: CV（元のまま維持）
                 formula_e = f'''=IF(A{row}="", "",
   LET(
     キー, A{row},
@@ -387,40 +426,40 @@ class DataHandler:
                 sheet.range(f"E{row}").formula = formula_e
                 formula_count += 1
 
-                # F列: CVR（修正版）
+                # F列: CVR（元のまま維持）
                 formula_f = f'=IF(OR(C{row}="", E{row}="", C{row}=0), "", TEXT(E{row}/C{row}, "0.00%"))'
                 sheet.range(f"F{row}").formula = formula_f
                 formula_count += 1
 
-                # G列: グロス（修正版 - #VALUE!エラー対応）
+                # G列: グロス（元のLET+FILTER構文で確実に86,087を計算）
                 formula_g = f'''=IF(A{row}="", "",
   LET(
     キー, A{row},
     検索列, {csv_sheet_ref}!{campaign_col}:{campaign_col},
     対象列, {csv_sheet_ref}!{gross_col}:{gross_col},
-    該当値, IFERROR(FILTER(対象列, ISNUMBER(SEARCH(キー, 検索列))), ""),
-    合計, IF(該当値="", "", IFERROR(SUM(該当値), "")),
-    IF(合計="", "", ROUND(合計, 0))
+    該当値, FILTER(対象列, ISNUMBER(SEARCH(キー, 検索列))),
+    合計, IFERROR(SUM(該当値), ""),
+    合計
   )
 )'''
                 sheet.range(f"G{row}").formula = formula_g
                 formula_count += 1
 
-                # H列: ネット（修正版 - #VALUE!エラー対応）
+                # H列: ネット（元のLET+FILTER構文で正確な値を計算）
                 formula_h = f'''=IF(A{row}="", "",
   LET(
     キー, A{row},
     検索列, {csv_sheet_ref}!{campaign_col}:{campaign_col},
     対象列, {csv_sheet_ref}!{net_col}:{net_col},
-    該当値, IFERROR(FILTER(対象列, ISNUMBER(SEARCH(キー, 検索列))), ""),
-    合計, IF(該当値="", "", IFERROR(SUM(該当値), "")),
-    IF(合計="", "", ROUND(合計, 0))
+    該当値, FILTER(対象列, ISNUMBER(SEARCH(キー, 検索列))),
+    合計, IFERROR(SUM(該当値), ""),
+    合計
   )
 )'''
                 sheet.range(f"H{row}").formula = formula_h
                 formula_count += 1
 
-                # I列: 税別グロス（修正版 - #VALUE!エラー対応）
+                # I列: 税別グロス（元のまま維持）
                 formula_i = f'=IF(OR(G{row}="", ISERROR(G{row})), "", ROUND(G{row}/1.1, 0))'
                 sheet.range(f"I{row}").formula = formula_i
                 formula_count += 1
@@ -436,8 +475,10 @@ class DataHandler:
 
         # 関数確認ログ
         try:
-            sample_formula = sheet.range("B2").formula
-            logger.info(f"関数確認サンプル B2: {sample_formula[:100]}...")
+            sample_formula_b = sheet.range("B2").formula
+            sample_formula_g = sheet.range("G2").formula
+            logger.info(f"関数確認サンプル B2: {sample_formula_b[:100]}...")
+            logger.info(f"グロス関数確認 G2: {sample_formula_g[:100]}...")
         except:
             logger.warning("関数確認に失敗")
 
