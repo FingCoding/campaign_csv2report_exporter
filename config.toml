@@ -1,0 +1,177 @@
+# ✅ fam8キャンペーンレポート自動集計システム 設定ファイル（修正版）
+# 【処理目的】fam8の広告キャンペーンレポートCSV（adult／general）を前日分から自動取得し、Excel集計ファイル csv2report_YYYYMMDD.xlsx を自動出力する
+
+[system]
+target_day = "auto"  # デフォルトは前日（orchestratorで補完）
+debug_mode = false   # デバッグモード（詳細ログ出力）
+dry_run = false      # ドライラン（実際のファイル操作なし）
+
+[paths]
+# 対象CSV格納ディレクトリ（YYYYMMDD フォルダ内）
+input_dir = "\\\\rin\\rep\\営業本部\\プロジェクト\\fam\\ADN\\各ADN進捗表\\fam8進捗\\キャンペーンレポートCSV"
+
+# 出力先ディレクトリ（処理実行日でフォルダ作成）
+output_dir = "\\\\rin\\rep\\営業本部\\プロジェクト\\fam\\ADN\\各ADN進捗表\\fam8進捗\\キャンペーンレポートCSV進捗集計"
+
+# ユーザー連携ファイル（更新対象）
+filter_input_excel = "\\\\rin\\rep\\営業本部\\プロジェクト\\fam\\ADN\\各ADN進捗表\\fam8進捗\\FilterInput_Csvreport.xlsx"
+
+# ログ出力ディレクトリ
+log_dir = "log"
+
+[files]
+# CSVファイル名パターン（※ YYYYMMDD は処理対象日）
+adult_csv = "affiliate_article_{date}_adult.csv"
+general_csv = "affiliate_article_{date}_general.csv"
+
+# 出力ファイル名（絶対変更禁止）
+output_filename = "csv2report_{date}.xlsx"
+
+[csv_processing]
+# CSV読込設定（1行目（広告管理）～3行目（カラム）は削除、4行目以降を貼付）
+skip_header_rows = 3
+
+# 除外設定（[total] やC列が [total] の行 → 完全除外）
+exclude_patterns = ["[total]"]
+
+# エンコーディング自動判定（Shift_JIS優先）
+auto_detect_encoding = true
+fallback_encodings = ["shift_jis", "cp932", "utf-8", "utf-8-sig", "euc-jp"]
+
+# 大容量ファイル対応
+chunk_size = 10000           # チャンク読み込みサイズ
+large_file_threshold = 52428800  # 50MB（これ以上はチャンク読み込み）
+
+# 実際のCSV列位置定義（修正版）
+[csv_processing.column_positions]
+campaign_group_col = "A"     # キャンペーングループ = A列（1番目）
+id_col = "B"                 # ID = B列（2番目）
+campaign_name_col = "C"      # キャンペーン名 = C列（3番目）
+size_col = "D"               # サイズ = D列（4番目）
+setting_col = "E"            # 設定 = E列（5番目）
+material_count_col = "F"     # 原稿数 = F列（6番目）
+margin_col = "G"             # マージン = G列（7番目）
+status_col = "H"             # ステータス = H列（8番目）
+imp_col = "I"                # Imp = I列（9番目）
+click_col = "J"              # Click = J列（10番目）
+ctr_col = "K"                # CTR = K列（11番目）
+cv_col = "L"                 # CV = L列（12番目）
+cvr_col = "M"                # CVR = M列（13番目）
+gross_col = "N"              # グロス = N列（14番目）
+net_col = "O"                # ネット = O列（15番目）
+
+[filter_settings]
+# FilterInput_Csvreport.xlsx 設定
+sheet_name = "集計シート"
+campaign_column = "A"  # A列（A2以降）に任意のキャンペーン名を入力
+start_row = 2
+
+# 検索方式（A列のキャンペーン名をもとに、前日分CSVを検索・抽出・集計）
+search_method = "partial_match"  # 部分一致で検索
+max_campaign_rows = 100          # 最大キャンペーン行数
+
+[aggregation]
+# 集計方式（A列（キャンペーン名）が重複するCSV行は合算）
+sum_columns = ["Imp", "Click", "CV", "グロス", "ネット", "税別グロス"]
+
+# 再計算列（CTR・CVRは集計後に「個別に再計算」する（加算しない））
+calculated_columns = ["CTR", "CVR"]
+
+# CTR計算式：Click / Imp（%）
+ctr_formula = "Click / Imp * 100"
+
+# CVR計算式：CV / Click（%）
+cvr_formula = "CV / Click * 100"
+
+# 小数点桁数（CTR・CVRは小数第２位まで表示）
+ctr_decimal_places = 2
+cvr_decimal_places = 2
+
+[excel_structure]
+# シート①：集計シート
+summary_sheet_name = "集計シート"
+
+# カラム定義（A1〜I1）
+summary_columns = [
+    "キャンペーン名",  # A列：FilterInput_Csvreport.xlsxのA列（A2以降）と部分一致で検索
+    "Imp",            # B列：合算
+    "Click",          # C列：合算
+    "CTR",            # D列：Click / Imp（%）
+    "CV",             # E列：合算
+    "CVR",            # F列：CV / Click（%）
+    "グロス",          # G列：合算
+    "ネット",          # H列：合算
+    "税別グロス"        # I列：合算
+]
+
+# シート②：前日分CSV抽出シート
+csv_sheet_name = "前日分CSV抽出シート"
+
+# CSV貼付方式
+csv_paste_method = "adult_first_then_general"  # 1. adult.csv（4行目以降）→ 2. general.csv（4行目以降、adultの最終行の直後に追加）
+
+[excel_formatting]
+# CTR・CVR書式（%表示、小数第２位まで）
+percentage_format = "0.00\"%\""
+
+# 税別グロス書式（円マーク付き）
+currency_format = "¥#,##0"
+
+# その他数値書式
+number_format = "#,##0"
+
+# ヘッダー書式
+header_font_bold = true
+header_background_color = [217, 217, 217]  # 薄いグレー
+
+# 列幅自動調整
+auto_column_width = true
+
+# 格子線設定
+add_grid_lines = true
+
+[real_time_calculation]
+# リアルタイム再計算（関数で1秒以内にB～I列へ自動反映）
+enable_real_time = true
+update_timeout = 1.0  # 1秒以内
+
+# Excel関数埋め込み（FilterInput_Csvreport.xlsx のB～I列用）
+ctr_excel_formula = "=IF(B{row}>0,C{row}/B{row},0)"
+cvr_excel_formula = "=IF(C{row}>0,E{row}/C{row},0)"
+
+[logging]
+# ログ設定（loguru使用）
+console_level = "INFO"
+file_level = "DEBUG"
+
+# ログパス（log/20250615/20250615.log（前日分でフォルダ分け））
+log_path_pattern = "log/{target_date}/{target_date}.log"
+
+# ログ形式
+console_format = "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <level>{message}</level>"
+log_format = "[{level}] {time:YYYY-MM-DD HH:mm:ss} → {message}"
+
+# 同日中は追記方式
+log_mode = "a"
+
+# 実行処理の各段階で区切りログを入れ、ファイルサイズや件数も記録
+log_file_sizes = true
+log_record_counts = true
+log_stage_separators = true
+
+# ログローテーション
+log_rotation = "10 MB"
+log_retention = "30 days"
+
+[performance]
+# パフォーマンス監視
+enable_performance_logging = true
+performance_log_file = "{target_date}_performance.log"
+
+# メモリ使用量監視
+monitor_memory_usage = true
+memory_warning_threshold = 1073741824  # 1GB
+
+# 処理時間監視
+log_processing_times = true
+time_warning_threshold = 300  # 5分
